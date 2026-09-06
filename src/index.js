@@ -55,11 +55,10 @@ async function main(){
   app.listen(cfg.port,()=>console.log(`Web/API :${cfg.port}`));
 
   const bot=new Client({intents:[GatewayIntentBits.Guilds]});
-  const adminPermission=PermissionFlagsBits.Administrator;
   const commands=[
-    new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(adminPermission),
-    new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('ZapPay order ID').setRequired(true)).setDefaultMemberPermissions(adminPermission),
-    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(adminPermission)
+    new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('ZapPay order ID').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   ];
 
   bot.once('ready',async()=>{
