@@ -83,9 +83,9 @@ async function main(){
         if(!providerOrderId)throw Error('ZapPay did not return an order ID');
         if(!url)throw Error('ZapPay did not return a payment URL');
         if(!Number.isFinite(providerAmount)||providerAmount!==amount)throw Error('ZapPay returned an unexpected amount');
-        const x=await PaymentLink.create({linkId,orderId:providerOrderId,amount,description:d,paymentUrl:url,discordUserId:i.user.id,discordUsername:i.user.username,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
+        await PaymentLink.create({linkId,orderId:providerOrderId,amount,description:d,paymentUrl:url,discordUserId:i.user.id,discordUsername:i.user.username,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
         await Transaction.create({orderId:providerOrderId,linkId,amount,description:d,discordUserId:i.user.id,discordUsername:i.user.username});
-        await i.editReply(`🔗 **Payment Link Created**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${providerOrderId}\`\n\n💳 **Pay Now:** ${url}\n\n🔗 **Anime Cloud Link:** ${cfg.publicBaseUrl}/pay/${x.linkId}`);
+        await i.editReply(`🔗 **Payment Link Created**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${providerOrderId}\`\n\n💳 **Pay Now:** ${url}`);
       }else if(i.commandName==='transaction'){
         const id=i.options.getString('order_id');
         const x=await PaymentLink.findOne({orderId:id});
