@@ -55,10 +55,11 @@ async function main(){
   app.listen(cfg.port,()=>console.log(`Web/API :${cfg.port}`));
 
   const bot=new Client({intents:[GatewayIntentBits.Guilds]});
+  const adminPermission=PermissionFlagsBits.Administrator;
   const commands=[
-    new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-    new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('ZapPay order ID').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(adminPermission),
+    new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('ZapPay order ID').setRequired(true)).setDefaultMemberPermissions(adminPermission),
+    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(adminPermission)
   ];
 
   bot.once('ready',async()=>{
@@ -69,6 +70,9 @@ async function main(){
 
   bot.on('interactionCreate',async i=>{
     if(!i.isChatInputCommand())return;
+    if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator)){
+      return i.reply({content:'❌ **Administrator permission required.**',ephemeral:true});
+    }
     await i.deferReply({ephemeral:false});
     try{
       if(i.commandName==='create-link'){
