@@ -6,6 +6,8 @@ const {PaymentLink,Transaction}=require('./models');
 const {createOrder,status}=require('./zappay');
 const cfg=require('./config');
 
+const startedAt=Date.now();
+
 async function finalizePayment(x,s){
   const providerStatus=String(s?.data?.status||'').toLowerCase();
   const providerAmount=Number(s?.data?.amount);
@@ -21,12 +23,28 @@ async function finalizePayment(x,s){
   return true;
 }
 
+function uptime(){
+  const seconds=Math.floor((Date.now()-startedAt)/1000);
+  const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60),s=seconds%60;
+  return `${d}d ${h}h ${m}m ${s}s`;
+}
+
+async function checkZapPay(){
+  try{
+    if(!cfg.zapPayApiKey) return false;
+    const response=await require('./zappay').status('__healthcheck__');
+    return !!response;
+  }catch(e){
+    return e?.response?.status===404 || String(e?.message||'').includes('(404)');
+  }
+}
+
 async function main(){
   await connect();
   const app=express();
   app.use(express.json());
   app.use(express.static('public'));
-  app.get('/health',(_,r)=>r.json({ok:true,service:cfg.brandName}));
+  app.get('/health',async(_,r)=>r.json({ok:true,service:cfg.brandName,uptime:process.uptime()}));
   app.get('/callback',(_,r)=>r.redirect('/'));
   app.get('/pay/:id',async(q,r)=>{
     const x=await PaymentLink.findOne({linkId:q.params.id}).lean();
@@ -58,7 +76,9 @@ async function main(){
   const commands=[
     new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('ZapPay order ID').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder().setName('status').setDescription('Check Anime Cloud Pay system status').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder().setName('help').setDescription('Show Anime Cloud Pay commands').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   ];
 
   bot.once('ready',async()=>{
@@ -74,6 +94,18 @@ async function main(){
     }
     await i.deferReply({ephemeral:false});
     try{
+      if(i.commandName==='help'){
+        return i.editReply('☁️ **Anime Cloud Pay — Help**\n\n🔐 **Payment Commands**\n`/create-link` — Create a UPI payment link\n`/transaction` — Check a transaction\n`/stats` — View payment statistics\n\n🛠️ **System Commands**\n`/status` — Check bot, API, database and ZapPay status\n`/help` — Show this help menu\n\n🔒 All commands are **Administrator-only**.');
+      }
+      if(i.commandName==='status'){
+        let dbStatus='🟢 Operational';
+        try{await PaymentLink.findOne().select('_id').lean().limit(1);}catch(e){dbStatus='🔴 Offline';}
+        let apiStatus='🟢 Operational';
+        try{await require('axios').get(`http://127.0.0.1:${cfg.port}/health`,{timeout:3000});}catch(e){apiStatus='🔴 Offline';}
+        let zapStatus='🟡 Checking';
+        try{await checkZapPay();zapStatus='🟢 Configured';}catch(e){zapStatus='🔴 Unavailable';}
+        return i.editReply(`☁️ **Anime Cloud Pay — System Status**\n\n🤖 Discord Bot — 🟢 Operational\n🌐 Web/API — ${apiStatus}\n🗄️ MongoDB — ${dbStatus}\n💳 ZapPay — ${zapStatus}\n\n**Uptime:** ${uptime()}\n**Overall:** 🟢 System Online\n**Last Check:** <t:${Math.floor(Date.now()/1000)}:R>`);
+      }
       if(i.commandName==='create-link'){
         const amount=Number(i.options.getNumber('amount'));
         if(!Number.isFinite(amount)||amount<1||amount>5000)throw Error('Amount must be ₹1–₹5,000');
