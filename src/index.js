@@ -69,7 +69,7 @@ async function main(){
 
   bot.on('interactionCreate',async i=>{
     if(!i.isChatInputCommand())return;
-    await i.deferReply({ephemeral:true});
+    await i.deferReply({ephemeral:false});
     try{
       if(i.commandName==='create-link'){
         const amount=Number(i.options.getNumber('amount'));
