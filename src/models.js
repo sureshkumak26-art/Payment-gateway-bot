@@ -1,0 +1,4 @@
+const mongoose=require('mongoose');
+const PaymentLink=mongoose.model('PaymentLink',new mongoose.Schema({linkId:{type:String,unique:true},orderId:{type:String,unique:true},amount:{type:Number,min:1,max:5000},description:String,status:{type:String,default:'PENDING',index:true},paymentUrl:String,discordUserId:String,discordUsername:String,expiresAt:Date,paidAt:Date,providerResponse:mongoose.Schema.Types.Mixed},{timestamps:true}));
+const Transaction=mongoose.model('Transaction',new mongoose.Schema({orderId:{type:String,unique:true},linkId:String,amount:Number,description:String,status:{type:String,default:'PENDING'},providerStatus:String,discordUserId:String,discordUsername:String,paidAt:Date,providerResponse:mongoose.Schema.Types.Mixed},{timestamps:true}));
+module.exports={PaymentLink,Transaction};
