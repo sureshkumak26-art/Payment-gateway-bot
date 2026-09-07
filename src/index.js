@@ -83,8 +83,8 @@ async function main(){
 
   bot.once('ready',async()=>{
     const rest=new REST({version:'10'}).setToken(cfg.discordToken);
-    await rest.put(cfg.discordGuildId?Routes.applicationGuildCommands(cfg.discordClientId,cfg.discordGuildId):Routes.applicationCommands(cfg.discordClientId),{body:commands.map(x=>x.toJSON())});
-    console.log(`Logged in as ${bot.user.tag}`);
+    await rest.put(Routes.applicationCommands(cfg.discordClientId),{body:commands.map(x=>x.toJSON())});
+    console.log(`Logged in as ${bot.user.tag} | Multi-server mode enabled`);
   });
 
   bot.on('interactionCreate',async i=>{
@@ -92,19 +92,22 @@ async function main(){
     if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator)){
       return i.reply({content:'❌ **Administrator permission required.**',ephemeral:true});
     }
+    if(!i.guildId){
+      return i.reply({content:'❌ This command can only be used inside a Discord server.',ephemeral:true});
+    }
     await i.deferReply({ephemeral:false});
     try{
       if(i.commandName==='help'){
-        return i.editReply('☁️ **Anime Cloud Pay — Help**\n\n🔐 **Payment Commands**\n`/create-link` — Create a UPI payment link\n`/transaction` — Check a transaction\n`/stats` — View payment statistics\n\n🛠️ **System Commands**\n`/status` — Check bot, API, database and ZapPay status\n`/help` — Show this help menu\n\n🔒 All commands are **Administrator-only**.');
+        return i.editReply('☁️ **Anime Cloud Pay — Help**\n\n🔐 **Payment Commands**\n`/create-link` — Create a UPI payment link\n`/transaction` — Check a transaction\n`/stats` — View payment statistics\n\n🛠️ **System Commands**\n`/status` — Check bot, API, database and ZapPay status\n`/help` — Show this help menu\n\n🔒 All commands are **Administrator-only**.\n🌐 Bot supports **multiple Discord servers**.');
       }
       if(i.commandName==='status'){
         let dbStatus='🟢 Operational';
-        try{await PaymentLink.findOne().select('_id').lean().limit(1);}catch(e){dbStatus='🔴 Offline';}
+        try{await PaymentLink.findOne({guildId:i.guildId}).select('_id').lean().limit(1);}catch(e){dbStatus='🔴 Offline';}
         let apiStatus='🟢 Operational';
         try{await require('axios').get(`http://127.0.0.1:${cfg.port}/health`,{timeout:3000});}catch(e){apiStatus='🔴 Offline';}
         let zapStatus='🟡 Checking';
         try{await checkZapPay();zapStatus='🟢 Configured';}catch(e){zapStatus='🔴 Unavailable';}
-        return i.editReply(`☁️ **Anime Cloud Pay — System Status**\n\n🤖 Discord Bot — 🟢 Operational\n🌐 Web/API — ${apiStatus}\n🗄️ MongoDB — ${dbStatus}\n💳 ZapPay — ${zapStatus}\n\n**Uptime:** ${uptime()}\n**Overall:** 🟢 System Online\n**Last Check:** <t:${Math.floor(Date.now()/1000)}:R>`);
+        return i.editReply(`☁️ **Anime Cloud Pay — System Status**\n\n🤖 Discord Bot — 🟢 Operational\n🌐 Web/API — ${apiStatus}\n🗄️ MongoDB — ${dbStatus}\n💳 ZapPay — ${zapStatus}\n\n🏠 **Server:** ${i.guild.name}\n**Uptime:** ${uptime()}\n**Overall:** 🟢 System Online\n**Last Check:** <t:${Math.floor(Date.now()/1000)}:R>`);
       }
       if(i.commandName==='create-link'){
         const amount=Number(i.options.getNumber('amount'));
@@ -118,20 +121,20 @@ async function main(){
         if(!providerOrderId)throw Error('ZapPay did not return an order ID');
         if(!url)throw Error('ZapPay did not return a payment URL');
         if(!Number.isFinite(providerAmount)||providerAmount!==amount)throw Error('ZapPay returned an unexpected amount');
-        await PaymentLink.create({linkId,orderId:providerOrderId,amount,description:d,paymentUrl:url,discordUserId:i.user.id,discordUsername:i.user.username,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
-        await Transaction.create({orderId:providerOrderId,linkId,amount,description:d,discordUserId:i.user.id,discordUsername:i.user.username});
-        await i.editReply(`🔗 **Payment Link Created**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${providerOrderId}\`\n\n💳 **Pay Now:** ${url}`);
+        await PaymentLink.create({linkId,orderId:providerOrderId,amount,description:d,paymentUrl:url,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
+        await Transaction.create({orderId:providerOrderId,linkId,amount,description:d,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name});
+        await i.editReply(`🔗 **Payment Link Created**\nServer: **${i.guild.name}**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${providerOrderId}\`\n\n💳 **Pay Now:** ${url}`);
       }else if(i.commandName==='transaction'){
         const id=i.options.getString('order_id');
-        const x=await PaymentLink.findOne({orderId:id});
-        if(!x)return i.editReply('❌ Not found');
+        const x=await PaymentLink.findOne({orderId:id,guildId:i.guildId});
+        if(!x)return i.editReply('❌ Transaction not found in this server.');
         const s=await status(id);
         await finalizePayment(x,s);
-        await i.editReply(`Order: \`${id}\`\nAmount: ₹${x.amount}\nStatus: **${x.status}**`);
+        await i.editReply(`🏠 Server: **${i.guild.name}**\nOrder: \`${id}\`\nAmount: ₹${x.amount}\nStatus: **${x.status}**`);
       }else{
-        const rows=await Transaction.find({status:'PAID'});
+        const rows=await Transaction.find({status:'PAID',guildId:i.guildId});
         const total=rows.reduce((a,x)=>a+Number(x.amount||0),0);
-        await i.editReply(`📊 Paid: **${rows.length}**\nRevenue: **₹${total.toFixed(2)}**`);
+        await i.editReply(`📊 **${i.guild.name} — Payment Statistics**\n\nPaid Transactions: **${rows.length}**\nRevenue: **₹${total.toFixed(2)}**`);
       }
     }catch(e){await i.editReply(`❌ ${e.message}`);}
   });
