@@ -10,8 +10,7 @@ module.exports={
   zapPayApiKey:required('ZAPPAY_API_KEY'),
   zapPayBaseUrl:(process.env.ZAPPAY_API_BASE_URL||'https://zappay-beta.vercel.app').replace(/\/$/,''),
   webhookSecret:process.env.ZAPPAY_WEBHOOK_SECRET||'',
-  nowPaymentsApiKey:process.env.NOWPAYMENTS_API_KEY||'',
-  nowPaymentsIpnSecret:process.env.NOWPAYMENTS_IPN_SECRET||'',
-  nowPaymentsBaseUrl:(process.env.NOWPAYMENTS_API_BASE_URL||'https://api.nowpayments.io').replace(/\/$/,''),
+  plisioSecretKey:process.env.PLISIO_SECRET_KEY||'',
+  plisioBaseUrl:(process.env.PLISIO_API_BASE_URL||'https://api.plisio.net/api/v1').replace(/\/$/,''),
   brandName:process.env.BRAND_NAME||'Anime Cloud Pay'
 };
