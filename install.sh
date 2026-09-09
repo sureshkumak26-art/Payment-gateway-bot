@@ -55,13 +55,14 @@ PUBLIC_BASE_URL=https://pay.example.com
 DISCORD_TOKEN=
 DISCORD_CLIENT_ID=
 DISCORD_GUILD_ID=
-ADMIN_ROLE_ID=
 MONGODB_URI=mongodb://127.0.0.1:27017/anime_cloud_pay
 ZAPPAY_API_KEY=
 ZAPPAY_API_BASE_URL=https://zappay-beta.vercel.app
-POLL_INTERVAL_MS=15000
+ZAPPAY_WEBHOOK_SECRET=
+PLISIO_SECRET_KEY=
+PLISIO_API_BASE_URL=https://api.plisio.net/api/v1
 BRAND_NAME=Anime Cloud Pay
-CURRENCY=INR
+POLL_INTERVAL_MS=15000
 EOF
   fi
   echo "Created ${APP_DIR}/.env"
@@ -69,12 +70,10 @@ else
   echo ".env already exists; keeping existing secrets/configuration."
 fi
 
-# Start MongoDB if this repository provides a compose file.
 if [[ -f docker-compose.yml || -f compose.yml ]]; then
   docker compose up -d mongodb 2>/dev/null || docker compose up -d
 fi
 
-# Install PM2 globally if needed.
 if ! command -v pm2 >/dev/null 2>&1; then
   npm install -g pm2
 fi
@@ -99,8 +98,15 @@ Project: ${APP_DIR}
 Edit configuration:
   nano ${APP_DIR}/.env
 
-Then restart:
+ZapPay setup:
   cd ${APP_DIR}
+  npm run setup
+
+Plisio setup:
+  cd ${APP_DIR}
+  npm run setup:plisio
+
+Then restart:
   pm2 restart ${APP_NAME}
 
 Check status/logs:
@@ -113,8 +119,9 @@ Local health check:
 IMPORTANT:
 1. Set DISCORD_TOKEN and DISCORD_CLIENT_ID in .env.
 2. Set ZAPPAY_API_KEY in .env.
-3. Set PUBLIC_BASE_URL to your HTTPS payment domain.
-4. Confirm MONGODB_URI matches your MongoDB deployment.
-5. Never commit .env or share your secrets.
+3. Set PLISIO_SECRET_KEY in .env.
+4. Set PUBLIC_BASE_URL to your HTTPS payment domain.
+5. Confirm MONGODB_URI matches your MongoDB deployment.
+6. Never commit .env or share your secrets.
 ==============================================
 EOF
