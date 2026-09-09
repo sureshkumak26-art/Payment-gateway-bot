@@ -1,3 +1,17 @@
 require('dotenv').config();
 function required(n){if(!process.env[n]) throw new Error(`Missing ${n}`); return process.env[n];}
-module.exports={port:Number(process.env.PORT||3000),publicBaseUrl:required('PUBLIC_BASE_URL').replace(/\/$/,''),discordToken:required('DISCORD_TOKEN'),discordClientId:required('DISCORD_CLIENT_ID'),discordGuildId:'',mongoUri:required('MONGODB_URI'),zapPayApiKey:required('ZAPPAY_API_KEY'),zapPayBaseUrl:(process.env.ZAPPAY_API_BASE_URL||'https://zappay-beta.vercel.app').replace(/\/$/,''),webhookSecret:process.env.ZAPPAY_WEBHOOK_SECRET||'',brandName:process.env.BRAND_NAME||'Anime Cloud Pay'};
+module.exports={
+  port:Number(process.env.PORT||3000),
+  publicBaseUrl:required('PUBLIC_BASE_URL').replace(/\/$/,''),
+  discordToken:required('DISCORD_TOKEN'),
+  discordClientId:required('DISCORD_CLIENT_ID'),
+  discordGuildId:'',
+  mongoUri:required('MONGODB_URI'),
+  zapPayApiKey:required('ZAPPAY_API_KEY'),
+  zapPayBaseUrl:(process.env.ZAPPAY_API_BASE_URL||'https://zappay-beta.vercel.app').replace(/\/$/,''),
+  webhookSecret:process.env.ZAPPAY_WEBHOOK_SECRET||'',
+  nowPaymentsApiKey:process.env.NOWPAYMENTS_API_KEY||'',
+  nowPaymentsIpnSecret:process.env.NOWPAYMENTS_IPN_SECRET||'',
+  nowPaymentsBaseUrl:(process.env.NOWPAYMENTS_API_BASE_URL||'https://api.nowpayments.io').replace(/\/$/,''),
+  brandName:process.env.BRAND_NAME||'Anime Cloud Pay'
+};
