@@ -27,6 +27,12 @@ async function apiGet(path,params={}){
   }
 }
 
+async function getCurrencies(fiat='INR'){
+  const data=await apiGet(`/currencies/${encodeURIComponent(String(fiat||'INR').toUpperCase())}`);
+  const list=Array.isArray(data?.data)?data.data:[];
+  return list.filter(x=>x&&x.hidden!==1&&x.hidden!=='1'&&x.maintenance!==true);
+}
+
 async function createInvoice({amount,description,orderNumber,currency}){
   requireKey();
   const sourceAmount=Number(amount);
@@ -76,4 +82,4 @@ function verifyWebhook(payload){
   return a.length===b.length&&crypto.timingSafeEqual(a,b);
 }
 
-module.exports={createInvoice,status,verifyWebhook};
+module.exports={createInvoice,status,verifyWebhook,getCurrencies};
