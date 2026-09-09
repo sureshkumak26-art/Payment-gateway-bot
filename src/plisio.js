@@ -27,8 +27,8 @@ async function apiGet(path,params={}){
   }
 }
 
-async function getCurrencies(fiat='INR'){
-  const data=await apiGet(`/currencies/${encodeURIComponent(String(fiat||'INR').toUpperCase())}`);
+async function getCurrencies(){
+  const data=await apiGet('/currencies');
   const list=Array.isArray(data?.data)?data.data:[];
   return list.filter(x=>x&&x.hidden!==1&&x.hidden!=='1'&&x.maintenance!==true);
 }
