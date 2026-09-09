@@ -1,6 +1,6 @@
-# Anime Cloud Pay — ZapPay Payment-Link Bot
+# Anime Cloud Pay — ZapPay + NOWPayments Payment-Link Bot
 
-Discord.js v14 + Express + MongoDB payment-link bot using ZapPay.
+Discord.js v14 + Express + MongoDB payment-link bot with ZapPay UPI and NOWPayments crypto checkout.
 
 ## Setup
 
@@ -9,18 +9,43 @@ git clone https://github.com/sureshkumak26-art/Payment-gateway-bot.git
 cd Payment-gateway-bot
 cp .env.example .env
 npm install
-npm start
 ```
 
-Set `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`, `MONGODB_URI`, `ZAPPAY_API_KEY`, and an HTTPS `PUBLIC_BASE_URL`.
+Configure `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `MONGODB_URI`, `ZAPPAY_API_KEY`, `PUBLIC_BASE_URL`, `NOWPAYMENTS_API_KEY`, and `NOWPAYMENTS_IPN_SECRET`.
 
-Commands:
-- `/create-link amount description`
-- `/transaction order_id`
-- `/stats`
+### ZapPay setup
 
-The application does **not** trust a browser redirect as payment proof. It verifies the order with ZapPay's server-side status endpoint before marking a transaction paid.
+```bash
+npm run setup
+```
+
+### NOWPayments setup
+
+```bash
+npm run setup:nowpayments
+```
+
+The NOWPayments IPN callback URL is:
+
+```text
+https://YOUR-PAYMENT-DOMAIN/api/nowpayments/webhook
+```
+
+Your `PUBLIC_BASE_URL` must be your own public HTTPS payment domain. Do not use the NOWPayments API hostname as `PUBLIC_BASE_URL`.
+
+## Discord commands
+
+- `/create-link amount description` — ZapPay UPI payment link
+- `/create-crypto-link amount description` — NOWPayments crypto payment link
+- `/transaction order_id` — Check UPI or crypto transaction
+- `/stats` — Payment statistics
+- `/status` — Bot/API/database/payment-provider status
+- `/help` — Help menu
+
+NOWPayments checkout lets the customer choose a supported cryptocurrency. NOWPayments IPNs are verified using the `x-nowpayments-sig` HMAC-SHA512 signature, and finished payments are re-checked through the provider API before being marked paid.
+
+The application does **not** trust a browser redirect as payment proof.
 
 ## Production
 
-Use HTTPS/reverse proxy and keep `.env` out of Git. Do not put API keys in source code. Confirm your current ZapPay account's exact authentication and request payload fields before live use, because provider contracts can change.
+Use HTTPS/reverse proxy and keep `.env` out of Git. Never put API keys or IPN secrets in source code. Configure the NOWPayments IPN secret in the NOWPayments dashboard and keep the callback endpoint publicly reachable.
