@@ -42,10 +42,10 @@ Set this URL as the Plisio Status URL if you are not overriding it per invoice. 
 - `/status` — Bot/API/database/payment-provider status
 - `/help` — Help menu
 
-Plisio invoices are created through `https://api.plisio.net/api/v1/invoices/new` using INR as the source currency. Plisio sends invoice updates to the callback URL with a `verify_hash`; the bot validates that HMAC-SHA1 signature and re-checks a completed transaction through the Plisio transaction-details endpoint before marking it paid. citeturn1search0turn2search0
+Plisio invoices are created through `https://api.plisio.net/api/v1/invoices/new` using INR as the source currency. Plisio sends invoice updates to the callback URL with a `verify_hash`; the bot validates that HMAC-SHA1 signature and re-checks a completed transaction through the Plisio transaction-details endpoint before marking it paid.
 
 The application does **not** trust a browser redirect as payment proof.
 
 ## Production
 
-Use HTTPS/reverse proxy and keep `.env` out of Git. Never put API keys or secret keys in source code. Keep the Plisio callback endpoint publicly reachable. Plisio documents the API secret key under its API settings. citeturn2search3turn0search0
+Use HTTPS/reverse proxy and keep `.env` out of Git. Never put API keys or secret keys in source code. Keep the Plisio callback endpoint publicly reachable. Plisio's secret key is configured from the Plisio API settings.
