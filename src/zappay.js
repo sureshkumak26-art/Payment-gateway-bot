@@ -1,12 +1,13 @@
 const axios=require('axios');
 const {zapPayApiKey,zapPayBaseUrl,publicBaseUrl}=require('./config');
 
+const cleanKey=String(zapPayApiKey||'').trim();
 const api=axios.create({
   baseURL:zapPayBaseUrl,
   timeout:15000,
   headers:{
     'Content-Type':'application/json',
-    'X-ZapAPI-Key':zapPayApiKey
+    'X-ZapAPI-Key':cleanKey
   }
 });
 
@@ -15,8 +16,10 @@ async function createOrder(amount,title){
   if(!Number.isFinite(cleanAmount)||cleanAmount<1||cleanAmount>5000){
     throw new Error('Amount must be a number between ₹1 and ₹5,000');
   }
+  if(!cleanKey) throw new Error('ZapPay API key is missing');
   try{
     const {data}=await api.post('/api/developer/create-order',{
+      zap_api:cleanKey,
       amount:cleanAmount,
       title:String(title||'Anime Cloud Pay Order').slice(0,100),
       redirect_url:`${publicBaseUrl}/callback`,
@@ -33,6 +36,7 @@ async function createOrder(amount,title){
 
 async function status(orderId){
   if(!orderId) throw new Error('Missing ZapPay order ID');
+  if(!cleanKey) throw new Error('ZapPay API key is missing');
   try{
     const {data}=await api.get(`/api/developer/order-status/${encodeURIComponent(orderId)}`);
     return data;
