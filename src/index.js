@@ -1,10 +1,10 @@
 const express=require('express');
 const crypto=require('crypto');
-const {Client,GatewayIntentBits,SlashCommandBuilder,REST,Routes,PermissionFlagsBits}=require('discord.js');
+const {Client,GatewayIntentBits,SlashCommandBuilder,REST,Routes,PermissionFlagsBits,ActionRowBuilder,ButtonBuilder,ButtonStyle,ModalBuilder,TextInputBuilder,TextInputStyle,StringSelectMenuBuilder}=require('discord.js');
 const connect=require('./db');
 const {PaymentLink,Transaction}=require('./models');
 const {createOrder,status:zapStatus}=require('./zappay');
-const {createInvoice,status:plisioStatus,verifyWebhook:verifyPlisioWebhook}=require('./plisio');
+const {createInvoice,status:plisioStatus,verifyWebhook:verifyPlisioWebhook,getCurrencies}=require('./plisio');
 const cfg=require('./config');
 
 const startedAt=Date.now();
@@ -12,8 +12,8 @@ const startedAt=Date.now();
 async function finalizeZapPayment(x,s){
   const providerStatus=String(s?.data?.status||'').toLowerCase();
   const providerAmount=Number(s?.data?.amount);
-  if(s?.success!==true||providerStatus!=='success') return false;
-  if(!Number.isFinite(providerAmount)||providerAmount!==Number(x.amount)) throw new Error('Payment amount mismatch');
+  if(s?.success!==true||providerStatus!=='success')return false;
+  if(!Number.isFinite(providerAmount)||providerAmount!==Number(x.amount))throw new Error('Payment amount mismatch');
   if(x.status!=='PAID'){
     x.status='PAID';x.paidAt=new Date();x.providerStatus='success';x.providerResponse=s;
     await x.save();
@@ -27,7 +27,7 @@ async function finalizePlisioPayment(x,payment){
   const providerStatus=String(data?.status||'').toLowerCase();
   const sourceAmount=Number(data?.params?.source_amount??data?.source_amount);
   if(providerStatus==='completed'){
-    if(Number.isFinite(sourceAmount)&&sourceAmount!==Number(x.amount)) throw new Error('Plisio payment amount mismatch');
+    if(Number.isFinite(sourceAmount)&&sourceAmount!==Number(x.amount))throw new Error('Plisio payment amount mismatch');
     x.status='PAID';x.paidAt=x.paidAt||new Date();x.providerStatus='completed';
     x.providerPaymentId=String(data?.id||x.providerPaymentId||'');x.providerResponse=payment;
     await x.save();
@@ -54,6 +54,58 @@ function uptime(){
 
 function esc(v){return String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
+function amountFromModal(i){
+  const amount=Number(i.fields.getTextInputValue('amount'));
+  if(!Number.isFinite(amount)||amount<1||amount>5000)throw new Error('Amount must be ₹1–₹5,000');
+  return amount;
+}
+
+async function createUpiPayment(i,amount,description){
+  const linkId='AC-'+crypto.randomBytes(6).toString('hex').toUpperCase();
+  const p=await createOrder(amount,description);
+  const providerOrderId=p?.data?.order_id,url=p?.data?.payment_url,providerAmount=Number(p?.data?.amount);
+  if(!providerOrderId||!url)throw new Error('ZapPay did not return a valid payment order');
+  if(!Number.isFinite(providerAmount)||providerAmount!==amount)throw new Error('ZapPay returned an unexpected amount');
+  await PaymentLink.create({linkId,orderId:String(providerOrderId),amount,description,paymentUrl:url,paymentMethod:'UPI',provider:'zappay',discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
+  await Transaction.create({orderId:String(providerOrderId),linkId,amount,description,paymentMethod:'UPI',provider:'zappay',discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name});
+  return {linkId,orderId:String(providerOrderId),url};
+}
+
+async function createCryptoPayment(i,amount,description,currency){
+  if(!cfg.plisioSecretKey)throw new Error('Plisio is not configured. Run `npm run setup:plisio`.');
+  const linkId='AC-CRYPTO-'+crypto.randomBytes(6).toString('hex').toUpperCase();
+  const p=await createInvoice({amount,description,orderNumber:linkId,currency});
+  const txnId=p?.data?.txn_id,url=p?.data?.invoice_url;
+  if(!txnId||!url)throw new Error('Plisio did not return a valid invoice');
+  const cryptoCurrency=p?.data?.currency||currency||undefined;
+  const cryptoAmount=Number(p?.data?.amount);
+  const localOrderId=`PL-${txnId}`;
+  await PaymentLink.create({linkId,orderId:localOrderId,amount,description,paymentUrl:url,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
+  await Transaction.create({orderId:localOrderId,linkId,amount,description,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,providerResponse:p});
+  return {linkId,orderId:localOrderId,url,currency:cryptoCurrency,cryptoAmount};
+}
+
+function paymentMethodButtons(){
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ac_create_upi').setLabel('UPI').setEmoji('🟢').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ac_create_crypto').setLabel('Crypto').setEmoji('🪙').setStyle(ButtonStyle.Primary)
+  );
+}
+
+function upiModal(){
+  return new ModalBuilder().setCustomId('ac_upi_modal').setTitle('Create UPI Payment Link').addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount (INR)').setPlaceholder('100').setStyle(TextInputStyle.Short).setRequired(true)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Description').setPlaceholder('Anime Cloud VPS').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(255))
+  );
+}
+
+function cryptoModal(currency){
+  return new ModalBuilder().setCustomId(`ac_crypto_modal:${currency}`).setTitle(`Create ${currency} Payment`).addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount (INR)').setPlaceholder('100').setStyle(TextInputStyle.Short).setRequired(true)),
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Description').setPlaceholder('Anime Cloud VPS').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(255))
+  );
+}
+
 async function main(){
   await connect();
   const app=express();
@@ -75,10 +127,9 @@ async function main(){
     try{
       const x=await PaymentLink.findOne({linkId:q.params.id});
       if(!x)return r.status(404).json({error:'not_found'});
-      if(x.paymentMethod==='CRYPTO'){
-        if(x.providerPaymentId){const s=await plisioStatus(x.providerPaymentId);await finalizePlisioPayment(x,s);}
-      }else{
-        const s=await zapStatus(x.orderId);await finalizeZapPayment(x,s);
+      if(x.status!=='PAID'&&x.status!=='FAILED'){
+        if(x.paymentMethod==='CRYPTO'&&x.providerPaymentId){const s=await plisioStatus(x.providerPaymentId);await finalizePlisioPayment(x,s);}
+        if(x.paymentMethod==='UPI'){const s=await zapStatus(x.orderId);await finalizeZapPayment(x,s);}
       }
       r.json({orderId:x.orderId,status:x.status,paymentMethod:x.paymentMethod,provider:x.provider,providerStatus:x.providerStatus||null});
     }catch(e){r.status(502).json({error:e.message||'provider_unavailable'});}
@@ -121,8 +172,7 @@ async function main(){
 
   const bot=new Client({intents:[GatewayIntentBits.Guilds]});
   const commands=[
-    new SlashCommandBuilder().setName('create-link').setDescription('Create a ZapPay UPI payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-    new SlashCommandBuilder().setName('create-crypto-link').setDescription('Create a Plisio crypto payment link').addNumberOption(o=>o.setName('amount').setDescription('INR 1-5000').setRequired(true)).addStringOption(o=>o.setName('description').setDescription('Description').setRequired(true)).addStringOption(o=>o.setName('currency').setDescription('Optional crypto code, e.g. BTC or ETH').setRequired(false).setMaxLength(20)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder().setName('createlink').setDescription('Create a payment link with UPI or Crypto').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('transaction').setDescription('Check transaction').addStringOption(o=>o.setName('order_id').setDescription('Payment order ID or link ID').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('stats').setDescription('Payment statistics').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName('status').setDescription('Check Anime Cloud Pay system status').setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -136,71 +186,76 @@ async function main(){
   });
 
   bot.on('interactionCreate',async i=>{
-    if(!i.isChatInputCommand())return;
-    if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator))return i.reply({content:'❌ **Administrator permission required.**',ephemeral:true});
-    if(!i.guildId)return i.reply({content:'❌ This command can only be used inside a Discord server.',ephemeral:true});
-    await i.deferReply({ephemeral:false});
+    if(!i.memberPermissions?.has(PermissionFlagsBits.Administrator))return i.reply({content:'❌ **Administrator permission required.**',ephemeral:true}).catch(()=>{});
+    if(!i.guildId)return i.reply({content:'❌ This interaction can only be used inside a Discord server.',ephemeral:true}).catch(()=>{});
     try{
-      if(i.commandName==='help')return i.editReply('☁️ **Anime Cloud Pay — Help**\n\n💳 **Payment Commands**\n`/create-link` — Create a ZapPay UPI payment link\n`/create-crypto-link` — Create a Plisio crypto payment link\n`/transaction` — Check any transaction\n`/stats` — View payment statistics\n\n🛠️ **System Commands**\n`/status` — Check bot, API, database, ZapPay and Plisio status\n`/help` — Show this help menu\n\n🔒 All commands are **Administrator-only**.\n🌐 Bot supports **multiple Discord servers**.');
-
-      if(i.commandName==='status'){
-        let dbStatus='🟢 Operational';
-        try{await PaymentLink.findOne({guildId:i.guildId}).select('_id').lean().limit(1);}catch{dbStatus='🔴 Offline';}
-        let apiStatus='🟢 Operational';
-        try{await require('axios').get(`http://127.0.0.1:${cfg.port}/health`,{timeout:3000});}catch{apiStatus='🔴 Offline';}
-        const plisioStatusText=cfg.plisioSecretKey?'🟢 Configured':'⚪ Not configured';
-        return i.editReply(`☁️ **Anime Cloud Pay — System Status**\n\n🤖 Discord Bot — 🟢 Operational\n🌐 Web/API — ${apiStatus}\n🗄️ MongoDB — ${dbStatus}\n💳 ZapPay — ${cfg.zapPayApiKey?'🟢 Configured':'🔴 Missing'}\n🪙 Plisio — ${plisioStatusText}\n\n🏠 **Server:** ${i.guild.name}\n**Uptime:** ${uptime()}\n**Overall:** 🟢 System Online\n**Last Check:** <t:${Math.floor(Date.now()/1000)}:R>`);
+      if(i.isChatInputCommand()){
+        if(i.commandName==='createlink')return i.reply({content:'💳 **Create Payment Link**\n\nSelect how the customer should pay:',components:[paymentMethodButtons()]});
+        await i.deferReply({ephemeral:false});
+        if(i.commandName==='help')return i.editReply('☁️ **Anime Cloud Pay — Help**\n\n💳 `/createlink` — Create a UPI or Crypto payment link\n`/transaction` — Check any transaction\n`/stats` — View payment statistics\n`/status` — Check bot, API, database, ZapPay and Plisio status\n\n🔒 All commands are **Administrator-only**.\n🌐 Multi-server mode enabled.');
+        if(i.commandName==='status'){
+          let dbStatus='🟢 Operational';
+          try{await PaymentLink.findOne({guildId:i.guildId}).select('_id').lean().limit(1);}catch{dbStatus='🔴 Offline';}
+          let apiStatus='🟢 Operational';
+          try{await require('axios').get(`http://127.0.0.1:${cfg.port}/health`,{timeout:3000});}catch{apiStatus='🔴 Offline';}
+          return i.editReply(`☁️ **Anime Cloud Pay — System Status**\n\n🤖 Discord Bot — 🟢 Operational\n🌐 Web/API — ${apiStatus}\n🗄️ MongoDB — ${dbStatus}\n💳 ZapPay — ${cfg.zapPayApiKey?'🟢 Configured':'🔴 Missing'}\n🪙 Plisio — ${cfg.plisioSecretKey?'🟢 Configured':'⚪ Not configured'}\n\n🏠 **Server:** ${i.guild.name}\n**Uptime:** ${uptime()}\n**Overall:** 🟢 System Online`);
+        }
+        if(i.commandName==='transaction'){
+          const id=i.options.getString('order_id');
+          const x=await PaymentLink.findOne({guildId:i.guildId,$or:[{orderId:id},{linkId:id}]});
+          if(!x)return i.editReply('❌ Transaction not found in this server.');
+          if(x.paymentMethod==='CRYPTO'&&x.providerPaymentId){const s=await plisioStatus(x.providerPaymentId);await finalizePlisioPayment(x,s);}
+          if(x.paymentMethod==='UPI'){const s=await zapStatus(x.orderId);await finalizeZapPayment(x,s);}
+          return i.editReply(`🏠 Server: **${i.guild.name}**\nProvider: **${x.provider}**\nMethod: **${x.paymentMethod}**\nOrder: \`${x.orderId}\`\nAmount: ₹${Number(x.amount).toFixed(2)}\n${x.cryptoCurrency?`Currency: **${x.cryptoCurrency}**\n`:''}Status: **${x.status}**${x.providerStatus?`\nProvider Status: **${x.providerStatus}**`:''}`);
+        }
+        if(i.commandName==='stats'){
+          const rows=await Transaction.find({status:'PAID',guildId:i.guildId}).lean();
+          const total=rows.reduce((a,x)=>a+Number(x.amount||0),0);
+          const upi=rows.filter(x=>x.paymentMethod==='UPI').length;
+          const cryptoRows=rows.filter(x=>x.paymentMethod==='CRYPTO').length;
+          return i.editReply(`📊 **${i.guild.name} — Payment Statistics**\n\nPaid Transactions: **${rows.length}**\n🟢 UPI: **${upi}**\n🪙 Crypto: **${cryptoRows}**\nRevenue: **₹${total.toFixed(2)}**`);
+        }
       }
 
-      if(i.commandName==='create-link'){
-        const amount=Number(i.options.getNumber('amount'));
-        if(!Number.isFinite(amount)||amount<1||amount>5000)throw Error('Amount must be ₹1–₹5,000');
-        const linkId='AC-'+crypto.randomBytes(6).toString('hex').toUpperCase();
-        const d=i.options.getString('description');
-        const p=await createOrder(amount,d);
-        const providerOrderId=p?.data?.order_id,url=p?.data?.payment_url,providerAmount=Number(p?.data?.amount);
-        if(!providerOrderId||!url)throw Error('ZapPay did not return a valid payment order');
-        if(!Number.isFinite(providerAmount)||providerAmount!==amount)throw Error('ZapPay returned an unexpected amount');
-        await PaymentLink.create({linkId,orderId:String(providerOrderId),amount,description:d,paymentUrl:url,paymentMethod:'UPI',provider:'zappay',discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
-        await Transaction.create({orderId:String(providerOrderId),linkId,amount,description:d,paymentMethod:'UPI',provider:'zappay',discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name});
-        return i.editReply(`🔗 **UPI Payment Link Created**\nServer: **${i.guild.name}**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${providerOrderId}\`\n\n💳 **Pay Now:** ${url}`);
+      if(i.isButton()){
+        if(i.customId==='ac_create_upi')return i.showModal(upiModal());
+        if(i.customId==='ac_create_crypto'){
+          if(!cfg.plisioSecretKey)return i.reply({content:'❌ Plisio is not configured. Run `npm run setup:plisio` on the VPS.',ephemeral:true});
+          await i.deferUpdate();
+          const currencies=await getCurrencies();
+          if(!currencies.length)return i.editReply({content:'❌ No active Plisio currencies are available right now.',components:[]});
+          const options=currencies.slice(0,25).map(c=>({label:`${String(c.name||c.currency||c.cid).slice(0,70)} (${String(c.cid||c.currency).slice(0,20)})`,value:String(c.cid||c.currency).slice(0,100),description:`${String(c.currency||c.cid||'Crypto').slice(0,100)}`}));
+          const menu=new StringSelectMenuBuilder().setCustomId('ac_crypto_currency').setPlaceholder('Select cryptocurrency').addOptions(options);
+          return i.editReply({content:`🪙 **Select Cryptocurrency**\n\nCurrent active currencies from Plisio: **${currencies.length}**\nChoose the currency for this payment link:`,components:[new ActionRowBuilder().addComponents(menu)]});
+        }
       }
 
-      if(i.commandName==='create-crypto-link'){
-        if(!cfg.plisioSecretKey)throw Error('Plisio is not configured. Run `npm run setup:plisio`.');
-        const amount=Number(i.options.getNumber('amount'));
-        if(!Number.isFinite(amount)||amount<1||amount>5000)throw Error('Amount must be ₹1–₹5,000');
-        const linkId='AC-CRYPTO-'+crypto.randomBytes(6).toString('hex').toUpperCase();
-        const d=i.options.getString('description');
-        const currency=i.options.getString('currency')||'';
-        const p=await createInvoice({amount,description:d,orderNumber:linkId,currency});
-        const txnId=p?.data?.txn_id,url=p?.data?.invoice_url;
-        if(!txnId||!url)throw Error('Plisio did not return a valid invoice');
-        const cryptoCurrency=p?.data?.currency||currency||undefined;
-        const cryptoAmount=Number(p?.data?.amount);
-        const localOrderId=`PL-${txnId}`;
-        await PaymentLink.create({linkId,orderId:localOrderId,amount,description:d,paymentUrl:url,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
-        await Transaction.create({orderId:localOrderId,linkId,amount,description:d,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:i.user.id,discordUsername:i.user.username,guildId:i.guildId,guildName:i.guild.name,providerResponse:p});
-        return i.editReply(`🪙 **Plisio Crypto Payment Link Created**\nServer: **${i.guild.name}**\nAmount: ₹${amount.toFixed(2)}${cryptoCurrency?`\nCurrency: **${cryptoCurrency}**`:''}\nOrder: \`${localOrderId}\`\n\n🌐 **Pay with Crypto:** ${url}`);
+      if(i.isStringSelectMenu()&&i.customId==='ac_crypto_currency'){
+        const currency=String(i.values[0]).trim().toUpperCase();
+        return i.showModal(cryptoModal(currency));
       }
 
-      if(i.commandName==='transaction'){
-        const id=i.options.getString('order_id');
-        const x=await PaymentLink.findOne({guildId:i.guildId,$or:[{orderId:id},{linkId:id}]});
-        if(!x)return i.editReply('❌ Transaction not found in this server.');
-        if(x.paymentMethod==='CRYPTO'&&x.providerPaymentId){const s=await plisioStatus(x.providerPaymentId);await finalizePlisioPayment(x,s);}
-        if(x.paymentMethod==='UPI'){const s=await zapStatus(x.orderId);await finalizeZapPayment(x,s);}
-        return i.editReply(`🏠 Server: **${i.guild.name}**\nProvider: **${x.provider}**\nOrder: \`${x.orderId}\`\nAmount: ₹${Number(x.amount).toFixed(2)}\nStatus: **${x.status}**${x.providerStatus?`\nProvider Status: **${x.providerStatus}**`:''}`);
+      if(i.isModalSubmit()){
+        await i.deferReply({ephemeral:false});
+        const amount=amountFromModal(i);
+        const description=i.fields.getTextInputValue('description').trim();
+        if(!description)throw new Error('Description is required');
+        if(i.customId==='ac_upi_modal'){
+          const p=await createUpiPayment(i,amount,description);
+          return i.editReply(`🔗 **UPI Payment Link Created**\nServer: **${i.guild.name}**\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${p.orderId}\`\n\n💳 **Pay Now:** ${p.url}`);
+        }
+        if(i.customId.startsWith('ac_crypto_modal:')){
+          const currency=i.customId.split(':')[1];
+          const p=await createCryptoPayment(i,amount,description,currency);
+          return i.editReply(`🪙 **Crypto Payment Link Created**\nServer: **${i.guild.name}**\nAmount: ₹${amount.toFixed(2)}\nCurrency: **${p.currency||currency}**\nOrder: \`${p.orderId}\`\n\n🌐 **Pay with Crypto:** ${p.url}`);
+        }
       }
-
-      if(i.commandName==='stats'){
-        const rows=await Transaction.find({status:'PAID',guildId:i.guildId}).lean();
-        const total=rows.reduce((a,x)=>a+Number(x.amount||0),0);
-        const upi=rows.filter(x=>x.paymentMethod==='UPI').length;
-        const cryptoRows=rows.filter(x=>x.paymentMethod==='CRYPTO').length;
-        return i.editReply(`📊 **${i.guild.name} — Payment Statistics**\n\nPaid Transactions: **${rows.length}**\nUPI Payments: **${upi}**\nCrypto Payments: **${cryptoRows}**\nRevenue: **₹${total.toFixed(2)}**`);
-      }
-    }catch(e){return i.editReply(`❌ ${e.message}`);}
+    }catch(e){
+      console.error('Interaction error:',e);
+      const message=`❌ ${e.message||'Something went wrong'}`;
+      if(i.deferred||i.replied)return i.editReply(message).catch(()=>{});
+      return i.reply({content:message,ephemeral:true}).catch(()=>{});
+    }
   });
 
   await bot.login(cfg.discordToken);
