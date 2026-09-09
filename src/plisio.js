@@ -19,7 +19,7 @@ async function apiGet(path,params={}){
     }
     return data;
   }catch(e){
-    if(e.message&&!e.response) throw e;
+    if(!e.response) throw e;
     const code=e.response?.status;
     const body=e.response?.data;
     const message=body?.data?.message||body?.message||e.message;
@@ -65,7 +65,6 @@ function verifyWebhook(payload){
   const ordered={...payload};
   const received=String(ordered.verify_hash);
   delete ordered.verify_hash;
-  Object.keys(ordered).sort().forEach(k=>{});
   const sorted={};
   for(const k of Object.keys(ordered).sort()) sorted[k]=ordered[k];
   if(Object.prototype.hasOwnProperty.call(sorted,'expire_utc')) sorted.expire_utc=String(sorted.expire_utc);
