@@ -1,4 +1,4 @@
-const {Client,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder}=require('discord.js');
+const {Client,GatewayIntentBits,ActionRowBuilder,ButtonBuilder,ButtonStyle,StringSelectMenuBuilder}=require('discord.js');
 const crypto=require('crypto');
 const cfg=require('./config');
 const {createOrder}=require('./zappay');
@@ -7,88 +7,14 @@ const {PaymentLink,Transaction}=require('./models');
 
 const originalLogin=Client.prototype.login;
 
-function payButtons(amount){
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`prefix_pay_upi:${amount}`).setLabel('UPI').setEmoji('🟢').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`prefix_pay_crypto:${amount}`).setLabel('Crypto').setEmoji('🪙').setStyle(ButtonStyle.Primary)
-  );
-}
+function payButtons(amount){return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`prefix_pay_upi:${amount}`).setLabel('UPI').setEmoji('🟢').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId(`prefix_pay_crypto:${amount}`).setLabel('Crypto').setEmoji('🪙').setStyle(ButtonStyle.Primary));}
 
-async function createUpi(message,amount){
-  const linkId='AC-'+crypto.randomBytes(6).toString('hex').toUpperCase();
-  const p=await createOrder(amount,'Payment');
-  const orderId=p?.data?.order_id;
-  const url=p?.data?.payment_url;
-  if(!orderId||!url) throw new Error('ZapPay did not return a valid payment link');
-  await PaymentLink.create({linkId,orderId:String(orderId),amount,description:'Payment',paymentUrl:url,paymentMethod:'UPI',provider:'zappay',discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
-  await Transaction.create({orderId:String(orderId),linkId,amount,description:'Payment',paymentMethod:'UPI',provider:'zappay',discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined});
-  return {linkId,orderId:String(orderId),url};
-}
+async function createUpi(message,amount){const linkId='AC-'+crypto.randomBytes(6).toString('hex').toUpperCase();const p=await createOrder(amount,'Payment');const orderId=p?.data?.order_id;const url=p?.data?.payment_url;if(!orderId||!url)throw new Error('ZapPay did not return a valid payment link');await PaymentLink.create({linkId,orderId:String(orderId),amount,description:'Payment',paymentUrl:url,paymentMethod:'UPI',provider:'zappay',discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,expiresAt:new Date(Date.now()+86400000),providerResponse:p});await Transaction.create({orderId:String(orderId),linkId,amount,description:'Payment',paymentMethod:'UPI',provider:'zappay',discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined});return {linkId,orderId:String(orderId),url};}
 
-async function createCrypto(message,amount,currency){
-  if(!cfg.plisioSecretKey) throw new Error('Plisio is not configured. Run `npm run setup:plisio`.');
-  const linkId='AC-CRYPTO-'+crypto.randomBytes(6).toString('hex').toUpperCase();
-  const p=await createInvoice({amount,description:'Payment',orderNumber:linkId,currency});
-  const txnId=p?.data?.txn_id;
-  const url=p?.data?.invoice_url;
-  if(!txnId||!url) throw new Error('Plisio did not return a valid invoice');
-  const cryptoCurrency=p?.data?.currency||currency;
-  const cryptoAmount=Number(p?.data?.amount);
-  const orderId=`PL-${txnId}`;
-  await PaymentLink.create({linkId,orderId,amount,description:'Payment',paymentUrl:url,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,expiresAt:new Date(Date.now()+86400000),providerResponse:p});
-  await Transaction.create({orderId,linkId,amount,description:'Payment',paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,providerResponse:p});
-  return {linkId,orderId,url,currency:cryptoCurrency,cryptoAmount};
-}
+async function createCrypto(message,amount,currency){if(!cfg.plisioSecretKey)throw new Error('Plisio is not configured. Run `npm run setup:plisio`.');const linkId='AC-CRYPTO-'+crypto.randomBytes(6).toString('hex').toUpperCase();const p=await createInvoice({amount,description:'Payment',orderNumber:linkId,currency});const txnId=p?.data?.txn_id;const url=p?.data?.invoice_url;if(!txnId||!url)throw new Error('Plisio did not return a valid invoice');const cryptoCurrency=p?.data?.currency||currency;const cryptoAmount=Number(p?.data?.amount);const orderId=`PL-${txnId}`;await PaymentLink.create({linkId,orderId,amount,description:'Payment',paymentUrl:url,paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,expiresAt:new Date(Date.now()+86400000),providerResponse:p});await Transaction.create({orderId,linkId,amount,description:'Payment',paymentMethod:'CRYPTO',provider:'plisio',providerPaymentId:String(txnId),cryptoCurrency,cryptoAmount:Number.isFinite(cryptoAmount)?cryptoAmount:undefined,discordUserId:message.author.id,discordUsername:message.author.username,guildId:message.guildId||undefined,guildName:message.guild?.name||undefined,providerResponse:p});return {linkId,orderId,url,currency:cryptoCurrency,cryptoAmount};}
 
-function installPrefixPay(bot){
-  bot.on('messageCreate',async message=>{
-    try{
-      if(message.author.bot||!message.content?.toLowerCase().startsWith('.pay')) return;
-      const parts=message.content.trim().split(/\s+/);
-      if(parts[0].toLowerCase()!=='.pay') return;
-      if(!message.guild) return;
-      if(!message.member?.permissions?.has('Administrator')) return message.reply('❌ **Administrator permission required.**');
-      const amount=Number(parts[1]);
-      if(!Number.isFinite(amount)||amount<1||amount>5000) return message.reply('❌ Usage: `.pay <amount>`\nExample: `.pay 100`');
-      const dm=await message.author.send({content:`💳 **Anime Cloud Pay**\n\nAmount: **₹${amount.toFixed(2)}**\nSelect the customer's payment method:`,components:[payButtons(amount)]});
-      await message.delete().catch(()=>{});
-      await message.channel.send(`📩 ${message.author}, payment setup sent to your **DM**.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),8000)).catch(()=>{});
-    }catch(e){console.error('Prefix .pay error:',e);message.reply(`❌ ${e.message||'Unable to create payment setup.'}`).catch(()=>{});}
-  });
+function installPrefixPay(bot){bot.on('messageCreate',async message=>{try{if(message.author.bot||!message.content?.toLowerCase().startsWith('.pay'))return;const parts=message.content.trim().split(/\s+/);if(parts[0].toLowerCase()!=='.pay')return;if(!message.guild)return;if(!message.member?.permissions?.has('Administrator'))return message.reply('❌ **Administrator permission required.**');const amount=Number(parts[1]);if(!Number.isFinite(amount)||amount<1||amount>5000)return message.reply('❌ Usage: `.pay <amount>`\nExample: `.pay 100`');await message.author.send({content:`💳 **Anime Cloud Pay**\n\nAmount: **₹${amount.toFixed(2)}**\nSelect the customer's payment method:`,components:[payButtons(amount)]});await message.delete().catch(()=>{});await message.channel.send(`📩 ${message.author}, payment setup sent to your **DM**.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}),8000)).catch(()=>{});}catch(e){console.error('Prefix .pay error:',e);message.reply(`❌ ${e.message||'Unable to create payment setup.'}`).catch(()=>{});}});
 
-  bot.on('interactionCreate',async interaction=>{
-    try{
-      if(interaction.isButton()&&interaction.customId.startsWith('prefix_pay_upi:')){
-        const amount=Number(interaction.customId.split(':')[1]);
-        await interaction.deferUpdate();
-        const fakeMessage={author:interaction.user,guildId:null,guild:null};
-        const p=await createUpi(fakeMessage,amount);
-        return interaction.editReply({content:`🔗 **UPI Payment Link Created**\n\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${p.orderId}\`\n\n💳 **Pay Now:** ${p.url}`,components:[]});
-      }
-      if(interaction.isButton()&&interaction.customId.startsWith('prefix_pay_crypto:')){
-        const amount=Number(interaction.customId.split(':')[1]);
-        await interaction.deferUpdate();
-        if(!cfg.plisioSecretKey) return interaction.editReply({content:'❌ Plisio is not configured. Run `npm run setup:plisio`.',components:[]});
-        const currencies=await getCurrencies();
-        if(!currencies.length) return interaction.editReply({content:'❌ No active Plisio currencies are available right now.',components:[]});
-        const options=currencies.slice(0,25).map(c=>({label:`${String(c.name||c.currency||c.cid).slice(0,70)} (${String(c.cid||c.currency).slice(0,20)})`,value:String(c.cid||c.currency).slice(0,100),description:String(c.currency||c.cid||'Crypto').slice(0,100)}));
-        const menu=new StringSelectMenuBuilder().setCustomId(`prefix_pay_currency:${amount}`).setPlaceholder('Select cryptocurrency').addOptions(options);
-        return interaction.editReply({content:`🪙 **Select Cryptocurrency**\n\nAmount: **₹${amount.toFixed(2)}**`,components:[new ActionRowBuilder().addComponents(menu)]});
-      }
-      if(interaction.isStringSelectMenu()&&interaction.customId.startsWith('prefix_pay_currency:')){
-        const amount=Number(interaction.customId.split(':')[1]);
-        const currency=String(interaction.values[0]).trim().toUpperCase();
-        await interaction.deferUpdate();
-        const fakeMessage={author:interaction.user,guildId:null,guild:null};
-        const p=await createCrypto(fakeMessage,amount,currency);
-        return interaction.editReply({content:`🪙 **Crypto Payment Link Created**\n\nAmount: ₹${amount.toFixed(2)}\nCurrency: **${p.currency||currency}**\nOrder: \`${p.orderId}\`\n\n🌐 **Pay with Crypto:** ${p.url}`,components:[]});
-      }
-    }catch(e){console.error('Prefix payment interaction error:',e);if(interaction.deferred||interaction.replied) interaction.editReply({content:`❌ ${e.message||'Payment creation failed.'}`,components:[]}).catch(()=>{});else interaction.reply({content:`❌ ${e.message||'Payment creation failed.'}`,ephemeral:true}).catch(()=>{});}
-  });
-}
+bot.on('interactionCreate',async interaction=>{try{if(interaction.isButton()&&interaction.customId.startsWith('prefix_pay_upi:')){const amount=Number(interaction.customId.split(':')[1]);await interaction.deferUpdate();const fakeMessage={author:interaction.user,guildId:null,guild:null};const p=await createUpi(fakeMessage,amount);return interaction.editReply({content:`🔗 **UPI Payment Link Created**\n\nAmount: ₹${amount.toFixed(2)}\nOrder: \`${p.orderId}\`\n\n💳 **Pay Now:** ${p.url}`,components:[]});}if(interaction.isButton()&&interaction.customId.startsWith('prefix_pay_crypto:')){const amount=Number(interaction.customId.split(':')[1]);await interaction.deferUpdate();if(!cfg.plisioSecretKey)return interaction.editReply({content:'❌ Plisio is not configured. Run `npm run setup:plisio`.',components:[]});const currencies=await getCurrencies();if(!currencies.length)return interaction.editReply({content:'❌ No active Plisio currencies are available right now.',components:[]});const options=currencies.slice(0,25).map(c=>({label:`${String(c.name||c.currency||c.cid).slice(0,70)} (${String(c.cid||c.currency).slice(0,20)})`,value:String(c.cid||c.currency).slice(0,100),description:String(c.currency||c.cid||'Crypto').slice(0,100)}));const menu=new StringSelectMenuBuilder().setCustomId(`prefix_pay_currency:${amount}`).setPlaceholder('Select cryptocurrency').addOptions(options);return interaction.editReply({content:`🪙 **Select Cryptocurrency**\n\nAmount: **₹${amount.toFixed(2)}**`,components:[new ActionRowBuilder().addComponents(menu)]});}if(interaction.isStringSelectMenu()&&interaction.customId.startsWith('prefix_pay_currency:')){const amount=Number(interaction.customId.split(':')[1]);const currency=String(interaction.values[0]).trim().toUpperCase();await interaction.deferUpdate();const fakeMessage={author:interaction.user,guildId:null,guild:null};const p=await createCrypto(fakeMessage,amount,currency);return interaction.editReply({content:`🪙 **Crypto Payment Link Created**\n\nAmount: ₹${amount.toFixed(2)}\nCurrency: **${p.currency||currency}**\nOrder: \`${p.orderId}\`\n\n🌐 **Pay with Crypto:** ${p.url}`,components:[]});}}catch(e){console.error('Prefix payment interaction error:',e);if(interaction.deferred||interaction.replied)interaction.editReply({content:`❌ ${e.message||'Payment creation failed.'}`,components:[]}).catch(()=>{});else interaction.reply({content:`❌ ${e.message||'Payment creation failed.'}`,ephemeral:true}).catch(()=>{});}});}
 
-Client.prototype.login=async function(token){
-  const result=await originalLogin.call(this,token);
-  if(!this.__prefixPayInstalled){this.__prefixPayInstalled=true;installPrefixPay(this);}
-  return result;
-};
+Client.prototype.login=async function(token){this.options.intents.add(GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent);const result=await originalLogin.call(this,token);if(!this.__prefixPayInstalled){this.__prefixPayInstalled=true;installPrefixPay(this);}return result;};
